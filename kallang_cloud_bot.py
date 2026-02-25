@@ -587,7 +587,7 @@ def send_notification_email(slot_count, screenshots=[]):
         
         subject = f"🏓 KALLANG PICKLEBALL - {slot_count} SLOTS FOUND!"
         
-        html_body = f"""
+        html_body = f'''
         <html>
             <head>
                 <style>
@@ -618,7 +618,7 @@ def send_notification_email(slot_count, screenshots=[]):
                 </div>
             </body>
         </html>
-        """
+        '''
         
         msg = MIMEMultipart("alternative")
         msg['Subject'] = subject
