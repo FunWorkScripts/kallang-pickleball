@@ -58,25 +58,48 @@ def random_delay(min_seconds=2, max_seconds=5):
 def setup_webdriver():
     """Setup Undetected Chrome WebDriver for cloud environment (harder to detect as bot)"""
     try:
-        chrome_options = Options()
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('--window-size=1920,1080')
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-        
-        # Use undetected-chromedriver (much harder to detect!)
         logger.info("→ Setting up undetected Chrome driver...")
-        driver = uc.Chrome(options=chrome_options, version_main=None)
+        
+        # Create options WITHOUT binary_location (let uc handle it)
+        options = webdriver.ChromeOptions()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--headless=new')  # New headless mode
+        options.add_argument('--start-maximized')
+        options.add_argument('--window-size=1920,1080')
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        # Initialize undetected-chromedriver (handles Chrome binary automatically)
+        driver = uc.Chrome(options=options)
         
         driver.set_page_load_timeout(30)
         logger.info("✅ Undetected Chrome WebDriver initialized (anti-bot protection active!)")
         return driver
     except Exception as e:
         logger.error(f"❌ Failed to initialize WebDriver: {e}")
-        raise
+        logger.info("→ Falling back to standard Selenium Chrome...")
+        
+        # Fallback to regular Selenium if undetected fails
+        try:
+            chrome_options = Options()
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--start-maximized')
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+            
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.set_page_load_timeout(30)
+            logger.info("⚠️ Using standard Chrome (undetected failed)")
+            return driver
+        except Exception as e2:
+            logger.error(f"❌ Both failed: {e2}")
+            raise
 
 def upload_to_imgur(image_path):
     """Upload screenshot to Imgur and return public URL"""
