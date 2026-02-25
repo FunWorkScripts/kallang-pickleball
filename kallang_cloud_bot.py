@@ -17,7 +17,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
 import requests
-import undetected_chromedriver as uc
 import random
 
 # Configure logging
@@ -56,50 +55,48 @@ def random_delay(min_seconds=2, max_seconds=5):
     time.sleep(delay)
 
 def setup_webdriver():
-    """Setup Undetected Chrome WebDriver for cloud environment (harder to detect as bot)"""
+    """Setup Chrome WebDriver with anti-bot stealth measures"""
     try:
-        logger.info("→ Setting up undetected Chrome driver...")
+        logger.info("→ Setting up Chrome driver with stealth measures...")
         
-        # Create options WITHOUT binary_location (let uc handle it)
-        options = webdriver.ChromeOptions()
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--headless=new')  # New headless mode
-        options.add_argument('--start-maximized')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        chrome_options = Options()
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--start-maximized')
+        chrome_options.add_argument('--window-size=1920,1080')
+        # Remove WebDriver detection
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        # Real user-agent
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        # Initialize undetected-chromedriver (handles Chrome binary automatically)
-        driver = uc.Chrome(options=options)
-        
+        driver = webdriver.Chrome(options=chrome_options)
         driver.set_page_load_timeout(30)
-        logger.info("✅ Undetected Chrome WebDriver initialized (anti-bot protection active!)")
+        
+        # Inject JavaScript to hide automation markers
+        driver.execute_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => false,
+            });
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+            });
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en'],
+            });
+        """)
+        
+        logger.info("✅ Chrome WebDriver initialized with anti-bot stealth measures")
+        logger.info("  - WebDriver detection hidden")
+        logger.info("  - Automation markers spoofed")
+        logger.info("  - Human-like user-agent set")
         return driver
     except Exception as e:
         logger.error(f"❌ Failed to initialize WebDriver: {e}")
-        logger.info("→ Falling back to standard Selenium Chrome...")
-        
-        # Fallback to regular Selenium if undetected fails
-        try:
-            chrome_options = Options()
-            chrome_options.add_argument('--no-sandbox')
-            chrome_options.add_argument('--disable-dev-shm-usage')
-            chrome_options.add_argument('--disable-gpu')
-            chrome_options.add_argument('--headless')
-            chrome_options.add_argument('--start-maximized')
-            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-            
-            driver = webdriver.Chrome(options=chrome_options)
-            driver.set_page_load_timeout(30)
-            logger.info("⚠️ Using standard Chrome (undetected failed)")
-            return driver
-        except Exception as e2:
-            logger.error(f"❌ Both failed: {e2}")
-            raise
+        raise
 
 def upload_to_imgur(image_path):
     """Upload screenshot to Imgur and return public URL"""
@@ -356,53 +353,101 @@ def dismiss_popups(driver):
     try:
         logger.info("→ Dismissing popups/cookies...")
         
-        # Try multiple approaches to dismiss popups
+        # FIRST: Try to click "Accept All" button directly using JavaScript
+        # This is more reliable than Selenium element clicking
+        logger.info("  Attempting to click Accept All button...")
+        result = driver.execute_script("""
+            // Look for any button containing "Accept"
+            var buttons = document.querySelectorAll('button');
+            for (let btn of buttons) {
+                var btnText = btn.textContent.trim();
+                logger.info('Found button: ' + btnText);
+                
+                // Match "Accept All" (case insensitive)
+                if (btnText.toLowerCase().includes('accept')) {
+                    logger.info('Clicking button: ' + btnText);
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        """)
+        
+        logger.info(f"  JavaScript click result: {result}")
+        time.sleep(2)
+        
+        # SECOND: Try clicking via Selenium with case-insensitive matching
         accept_selectors = [
-            "//button[contains(text(), 'Accept all')]",
-            "//button[contains(text(), 'Accept')]",
-            "//button[contains(text(), 'Agree')]",
-            "//button[contains(text(), 'OK')]",
-            "//button[contains(text(), 'accept')]",
-            "//button[contains(text(), 'agree')]",
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]",
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept')]",
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'agree')]",
+            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ok')]",
         ]
         
         for selector in accept_selectors:
             try:
                 buttons = driver.find_elements(By.XPATH, selector)
+                logger.info(f"  Found {len(buttons)} button(s) with selector")
                 for btn in buttons:
                     if btn.is_displayed():
-                        logger.info(f"  Clicking: {btn.text}")
+                        btn_text = btn.text
+                        logger.info(f"  Clicking: {btn_text}")
+                        # Scroll into view first
+                        driver.execute_script("arguments[0].scrollIntoView(true);", btn)
+                        time.sleep(0.5)
                         btn.click()
                         time.sleep(1)
-            except:
+            except Exception as e:
+                logger.info(f"  Selector failed: {str(e)[:50]}")
                 pass
         
-        # Use JavaScript to hide/remove cookie banners
-        logger.info("  Using JavaScript to remove overlays...")
+        # THIRD: Use JavaScript to aggressively remove cookie elements
+        logger.info("  Using JavaScript to remove cookie overlays...")
         driver.execute_script("""
-            // Remove common cookie/popup divs
-            var removals = [
+            // Remove cookie banners by common selectors
+            var toRemove = [
                 document.querySelector('[class*="cookie"]'),
                 document.querySelector('[class*="popup"]'),
                 document.querySelector('[class*="banner"]'),
                 document.querySelector('[id*="cookie"]'),
                 document.querySelector('[id*="popup"]'),
-                document.querySelector('[data-testid*="cookie"]'),
+                document.querySelector('[role="dialog"]'),
             ];
             
-            removals.forEach(el => {
+            toRemove.forEach(el => {
                 if (el) {
-                    el.style.display = 'none';
-                    el.remove();
+                    try {
+                        el.remove();
+                    } catch(e) {}
                 }
             });
             
-            // Remove overflow hidden from body
+            // Remove any overlay divs with high z-index
+            var allDivs = document.querySelectorAll('div');
+            allDivs.forEach(div => {
+                var style = window.getComputedStyle(div);
+                if (style.position === 'fixed' && parseInt(style.zIndex) > 500) {
+                    try {
+                        div.remove();
+                    } catch(e) {}
+                }
+            });
+            
+            // Restore scrolling
             document.body.style.overflow = 'auto';
+            document.body.style.height = 'auto';
         """)
         
         time.sleep(2)
         logger.info("✅ Popup dismissal complete")
+        
+        # Verify cookie banner is gone
+        page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+        if "accept all" in page_text[:500] or "cookies" in page_text[:300]:
+            logger.warning("⚠️ Cookie banner may still be visible - proceeding anyway")
+        else:
+            logger.info("✅ Verified: Cookie banner removed")
+        
         return True
         
     except Exception as e:
