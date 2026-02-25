@@ -1,6 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version
-Runs on Railway.app - Checks for Wed/Fri 7-9 PM slots and sends email notifications
+The Kallang Pickleball Bot - Cloud Version (Improved)
+Better error handling and multiple selector attempts
 """
 
 import os
@@ -12,6 +12,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -57,7 +58,10 @@ def setup_webdriver():
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--disable-popup-blocking')
         chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         
         driver = webdriver.Chrome(options=chrome_options)
         driver.set_page_load_timeout(30)
@@ -68,36 +72,129 @@ def setup_webdriver():
         raise
 
 def login(driver):
-    """Login to The Kallang account"""
+    """Login to The Kallang account with multiple selector attempts"""
     try:
         logger.info("→ Attempting to login...")
         driver.get(LOGIN_URL)
-        time.sleep(3)
+        time.sleep(5)  # Wait longer for page to load
         
-        # Find and fill email
-        email_field = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
-        )
+        # Try multiple selectors for email field
+        email_selectors = [
+            (By.CSS_SELECTOR, "input[type='email']"),
+            (By.CSS_SELECTOR, "input[type='text'][placeholder*='email' i]"),
+            (By.CSS_SELECTOR, "input[name='email']"),
+            (By.XPATH, "//input[@type='email']"),
+            (By.XPATH, "//input[@placeholder[contains(., 'email')]]"),
+        ]
+        
+        email_field = None
+        for selector_type, selector_value in email_selectors:
+            try:
+                logger.info(f"  Trying selector: {selector_value}")
+                email_field = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((selector_type, selector_value))
+                )
+                logger.info(f"  ✅ Found email field!")
+                break
+            except:
+                logger.info(f"  ⚠️  Selector failed, trying next...")
+                continue
+        
+        if not email_field:
+            # Try finding by placeholder or label
+            try:
+                logger.info("  Trying to find email field by all inputs...")
+                all_inputs = driver.find_elements(By.TAG_NAME, "input")
+                logger.info(f"  Found {len(all_inputs)} input fields")
+                for inp in all_inputs:
+                    placeholder = inp.get_attribute('placeholder') or ''
+                    name = inp.get_attribute('name') or ''
+                    input_type = inp.get_attribute('type') or ''
+                    logger.info(f"    - Type: {input_type}, Name: {name}, Placeholder: {placeholder}")
+                    if 'email' in placeholder.lower() or 'email' in name.lower() or input_type == 'email':
+                        email_field = inp
+                        logger.info(f"  ✅ Found email field!")
+                        break
+            except Exception as e:
+                logger.error(f"  Error analyzing inputs: {e}")
+        
+        if not email_field:
+            logger.error("❌ Could not find email input field after trying multiple selectors")
+            logger.error("Page content preview:")
+            logger.error(driver.page_source[:1000])
+            return False
+        
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
+        logger.info(f"✅ Email entered: {KALLANG_EMAIL}")
+        time.sleep(1)
         
-        # Find and fill password
-        password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+        # Find password field
+        password_selectors = [
+            (By.CSS_SELECTOR, "input[type='password']"),
+            (By.XPATH, "//input[@type='password']"),
+        ]
+        
+        password_field = None
+        for selector_type, selector_value in password_selectors:
+            try:
+                password_field = driver.find_element(selector_type, selector_value)
+                break
+            except:
+                continue
+        
+        if not password_field:
+            logger.error("❌ Could not find password input field")
+            return False
+        
         password_field.clear()
         password_field.send_keys(KALLANG_PASSWORD)
+        logger.info("✅ Password entered")
+        time.sleep(1)
         
-        # Click login button
-        login_button = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Login')] | //button[contains(text(), 'Sign In')]"))
-        )
+        # Find and click login button
+        login_button_selectors = [
+            (By.XPATH, "//button[contains(text(), 'Login') or contains(text(), 'Sign In') or contains(text(), 'login')]"),
+            (By.XPATH, "//button[@type='submit']"),
+            (By.CSS_SELECTOR, "button[type='submit']"),
+        ]
+        
+        login_button = None
+        for selector_type, selector_value in login_button_selectors:
+            try:
+                login_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((selector_type, selector_value))
+                )
+                logger.info(f"✅ Found login button")
+                break
+            except:
+                continue
+        
+        if not login_button:
+            logger.error("❌ Could not find login button")
+            return False
+        
         login_button.click()
+        logger.info("✅ Login button clicked")
         
-        time.sleep(5)
-        logger.info("✅ Login successful")
+        # Wait for login to complete
+        time.sleep(8)
+        
+        # Check if login was successful by checking if we're still on login page
+        current_url = driver.current_url
+        logger.info(f"Current URL after login: {current_url}")
+        
+        if "login" in current_url.lower():
+            logger.warning("⚠️  Still on login page - might still be authenticating")
+            time.sleep(3)
+        
+        logger.info("✅ Login process completed")
         return True
         
     except Exception as e:
-        logger.error(f"❌ Login failed: {e}")
+        logger.error(f"❌ Login error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 def check_for_slots(driver):
@@ -105,9 +202,9 @@ def check_for_slots(driver):
     try:
         logger.info("→ Checking for available slots...")
         driver.get(BOOKING_URL)
-        time.sleep(3)
+        time.sleep(4)
         
-        # Get page source to check for time patterns
+        # Get page source
         page_source = driver.page_source
         
         # Check for 7-9 PM time indicators
@@ -118,10 +215,10 @@ def check_for_slots(driver):
             logger.info("ℹ No 7-9 PM time slots found on page")
             return False, []
         
-        # Find all "Book now" or "Book" buttons
+        # Find all "Book" buttons
         book_buttons = []
         try:
-            buttons = driver.find_elements(By.XPATH, "//button[contains(text(), 'Book') or contains(text(), 'book')]")
+            buttons = driver.find_elements(By.XPATH, "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'book')]")
             
             for btn in buttons:
                 try:
@@ -208,7 +305,7 @@ def send_notification_email(slot_count):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (IMPROVED VERSION)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
@@ -225,7 +322,11 @@ def run_bot():
         driver = setup_webdriver()
         
         if not login(driver):
-            logger.error("❌ Failed to login. Exiting.")
+            logger.error("❌ Failed to login. Retrying in 30 seconds...")
+            time.sleep(30)
+            driver.quit()
+            # Restart the process
+            run_bot()
             return
         
         logger.info("✅ Successfully logged in. Starting monitoring loop...")
@@ -249,6 +350,8 @@ def run_bot():
         logger.info("\n⏸️  Bot stopped by user")
     except Exception as e:
         logger.error(f"❌ Critical error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         if driver:
             try:
