@@ -1,6 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version (Enhanced Logging)
-Shows exactly what facility and times are being checked
+The Kallang Pickleball Bot - Cloud Version (With Cookie Handling)
+Accepts cookies popup before checking for slots
 """
 
 import os
@@ -101,7 +101,7 @@ def login(driver):
         
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
-        logger.info(f"✅ Email entered: {KALLANG_EMAIL}")
+        logger.info(f"✅ Email entered")
         time.sleep(2)
         
         # Find password field
@@ -174,12 +174,51 @@ def login(driver):
         logger.error(traceback.format_exc())
         return False
 
+def accept_cookies(driver):
+    """Accept cookie popup if present"""
+    try:
+        logger.info("→ Checking for cookie popup...")
+        
+        # Try multiple selectors for cookie accept button
+        cookie_selectors = [
+            (By.XPATH, "//button[contains(text(), 'Accept all')]"),
+            (By.XPATH, "//button[contains(text(), 'Accept')]"),
+            (By.XPATH, "//button[contains(text(), 'accept')]"),
+            (By.CSS_SELECTOR, "button[class*='accept']"),
+            (By.XPATH, "//button[contains(., 'Accept')]"),
+        ]
+        
+        for selector_type, selector_value in cookie_selectors:
+            try:
+                cookie_button = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((selector_type, selector_value))
+                )
+                logger.info("✅ Found cookie accept button - clicking...")
+                cookie_button.click()
+                time.sleep(2)
+                logger.info("✅ Cookies accepted!")
+                return True
+            except:
+                continue
+        
+        logger.info("ℹ No cookie popup found (or already accepted)")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error handling cookies: {e}")
+        return True  # Continue anyway
+
 def check_for_slots(driver):
     """Check if 7-9 PM slots are available for Wed/Fri with detailed logging"""
     try:
         logger.info("→ Checking for available slots...")
         driver.get(BOOKING_URL)
-        time.sleep(4)
+        time.sleep(3)
+        
+        # Accept cookies if popup appears
+        accept_cookies(driver)
+        
+        time.sleep(2)  # Wait after accepting cookies
         
         page_source = driver.page_source
         page_text = driver.find_element(By.TAG_NAME, "body").text
@@ -194,10 +233,16 @@ def check_for_slots(driver):
             logger.warning("⚠️ Pickleball mention not found - checking anyway")
         
         # Check for dates (Wed/Fri)
-        if "WEDNESDAY" in page_text or "Wednesday" in page_text or "WED" in page_text:
+        has_wed = "WEDNESDAY" in page_text or "Wednesday" in page_text or "WED" in page_text
+        has_fri = "FRIDAY" in page_text or "Friday" in page_text or "FRI" in page_text
+        
+        if has_wed:
             logger.info("✅ Wednesday found on page")
-        if "FRIDAY" in page_text or "Friday" in page_text or "FRI" in page_text:
+        if has_fri:
             logger.info("✅ Friday found on page")
+        
+        if not has_wed and not has_fri:
+            logger.warning("⚠️ Neither Wednesday nor Friday found on page")
         
         # Check for 7-9 PM time indicators
         time_patterns = {
@@ -207,6 +252,8 @@ def check_for_slots(driver):
             '8:00 PM': '8 PM (format 1)',
             '7:00pm': '7 PM (format 2)',
             '8:00pm': '8 PM (format 2)',
+            '07:00 PM': '7 PM (format 3)',
+            '08:00 PM': '8 PM (format 3)',
         }
         
         found_times = []
@@ -323,7 +370,7 @@ def send_notification_email(slot_count):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (ENHANCED LOGGING)")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (WITH COOKIE HANDLING)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
