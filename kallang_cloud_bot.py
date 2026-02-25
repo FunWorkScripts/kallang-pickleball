@@ -1,6 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version (Fixed Login)
-Uses JavaScript to click login button if Selenium selector fails
+The Kallang Pickleball Bot - Cloud Version (Enhanced Logging)
+Shows exactly what facility and times are being checked
 """
 
 import os
@@ -101,7 +101,7 @@ def login(driver):
         
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
-        logger.info(f"✅ Email entered")
+        logger.info(f"✅ Email entered: {KALLANG_EMAIL}")
         time.sleep(2)
         
         # Find password field
@@ -111,38 +111,34 @@ def login(driver):
         logger.info("✅ Password entered")
         time.sleep(2)
         
-        # Try to find and click login button using multiple methods
+        # Try to find and click login button
         logger.info("→ Looking for login button...")
         
-        # Method 1: Try XPath selectors
         button_found = False
         button_selectors = [
             (By.XPATH, "//button[contains(text(), 'Login')]"),
             (By.XPATH, "//button[contains(text(), 'Sign In')]"),
             (By.XPATH, "//button[@type='submit']"),
             (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.XPATH, "//button"),  # Just click first button
+            (By.XPATH, "//button"),
         ]
         
         for selector_type, selector_value in button_selectors:
             try:
-                logger.info(f"  Trying: {selector_value}")
                 button = WebDriverWait(driver, 3).until(
                     EC.element_to_be_clickable((selector_type, selector_value))
                 )
-                logger.info(f"  ✅ Found button!")
+                logger.info(f"✅ Found and clicked button")
                 button.click()
                 button_found = True
                 break
             except:
-                logger.info(f"  ⚠️  Failed")
                 continue
         
-        # Method 2: If button not found, use JavaScript to click
+        # If button not found, use JavaScript
         if not button_found:
-            logger.info("→ Trying JavaScript approach...")
+            logger.info("→ Using JavaScript to click button...")
             try:
-                # Try clicking with JavaScript
                 driver.execute_script("""
                     var buttons = document.querySelectorAll('button');
                     for (let btn of buttons) {
@@ -150,7 +146,6 @@ def login(driver):
                             btn.textContent.toLowerCase().includes('sign in') ||
                             btn.type === 'submit') {
                             btn.click();
-                            console.log('Clicked button via JS');
                             break;
                         }
                     }
@@ -161,8 +156,6 @@ def login(driver):
                 logger.error(f"❌ JavaScript click failed: {e}")
         
         if not button_found:
-            logger.error("❌ Could not find or click login button after all attempts")
-            # Try pressing Enter as last resort
             logger.info("→ Trying to press Enter key...")
             try:
                 password_field.send_keys("\n")
@@ -171,9 +164,7 @@ def login(driver):
                 logger.error("❌ Failed to press Enter")
                 return False
         
-        # Wait for login to complete
         time.sleep(8)
-        
         logger.info("✅ Login process completed")
         return True
         
@@ -184,49 +175,92 @@ def login(driver):
         return False
 
 def check_for_slots(driver):
-    """Check if 7-9 PM slots are available for Wed/Fri"""
+    """Check if 7-9 PM slots are available for Wed/Fri with detailed logging"""
     try:
         logger.info("→ Checking for available slots...")
         driver.get(BOOKING_URL)
         time.sleep(4)
         
         page_source = driver.page_source
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        
+        # Log what facility we're on
+        logger.info("📍 Current page analysis:")
+        
+        # Check for pickleball court reference
+        if "pickleball" in page_source.lower():
+            logger.info("✅ Pickleball court page detected")
+        else:
+            logger.warning("⚠️ Pickleball mention not found - checking anyway")
+        
+        # Check for dates (Wed/Fri)
+        if "WEDNESDAY" in page_text or "Wednesday" in page_text or "WED" in page_text:
+            logger.info("✅ Wednesday found on page")
+        if "FRIDAY" in page_text or "Friday" in page_text or "FRI" in page_text:
+            logger.info("✅ Friday found on page")
         
         # Check for 7-9 PM time indicators
-        time_patterns = ['19:00', '20:00', '7:00 PM', '8:00 PM', '7:00pm', '8:00pm']
-        has_time_slots = any(pattern in page_source for pattern in time_patterns)
+        time_patterns = {
+            '19:00': '7 PM',
+            '20:00': '8 PM',
+            '7:00 PM': '7 PM (format 1)',
+            '8:00 PM': '8 PM (format 1)',
+            '7:00pm': '7 PM (format 2)',
+            '8:00pm': '8 PM (format 2)',
+        }
         
-        if not has_time_slots:
-            logger.info("ℹ No 7-9 PM time slots found on page")
+        found_times = []
+        for pattern, description in time_patterns.items():
+            if pattern in page_source:
+                found_times.append(f"{description} ({pattern})")
+                logger.info(f"  ✅ Found: {description}")
+        
+        if not found_times:
+            logger.info("ℹ No 7-9 PM time slots (19:00-20:00) found on page")
+            logger.info("📊 Sample of page content (first 500 chars):")
+            logger.info(page_text[:500])
             return False, []
         
-        # Find all "Book" buttons
+        logger.info(f"✅ Found {len(found_times)} time pattern(s)")
+        
+        # Find all "Book" buttons with detailed info
         book_buttons = []
         try:
             buttons = driver.find_elements(By.XPATH, "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'book')]")
+            logger.info(f"📊 Found {len(buttons)} 'Book' buttons on page")
             
-            for btn in buttons:
+            for idx, btn in enumerate(buttons, 1):
                 try:
                     if btn.is_displayed() and btn.is_enabled():
                         parent = btn.find_element(By.XPATH, "..")
                         context = parent.text.lower()
+                        button_text = btn.text
                         
+                        logger.info(f"  Button #{idx}: '{button_text}' | Context: {context[:80]}...")
+                        
+                        # Check for 7-9 PM context
                         if any(pattern in context for pattern in ['19', '20', '7', '8']):
                             book_buttons.append(btn)
-                except:
-                    pass
-        except:
-            pass
+                            logger.info(f"    ✅ Matches 7-9 PM criteria")
+                        else:
+                            logger.info(f"    ⚠️ Doesn't match 7-9 PM criteria")
+                except Exception as e:
+                    logger.info(f"  Button #{idx}: Error processing - {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error finding buttons: {e}")
         
         if book_buttons:
             logger.info(f"🎉 FOUND {len(book_buttons)} AVAILABLE SLOTS FOR 7-9 PM!")
             return True, book_buttons
         else:
-            logger.info("ℹ No bookable 7-9 PM slots found")
+            logger.info("ℹ No bookable 7-9 PM slots matching criteria found")
             return False, []
         
     except Exception as e:
         logger.error(f"❌ Error checking slots: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False, []
 
 def send_notification_email(slot_count):
@@ -279,7 +313,7 @@ def send_notification_email(slot_count):
             server.login(GMAIL_SENDER, GMAIL_PASSWORD)
             server.sendmail(GMAIL_SENDER, NOTIFICATION_EMAIL, msg.as_string())
         
-        logger.info(f"✅ Email sent!")
+        logger.info(f"✅ Email sent to {NOTIFICATION_EMAIL}!")
         return True
         
     except Exception as e:
@@ -289,12 +323,13 @@ def send_notification_email(slot_count):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (FIXED LOGIN)")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (ENHANCED LOGGING)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
     logger.info(f"  Notification: {NOTIFICATION_EMAIL}")
-    logger.info(f"  Check interval: {CHECK_INTERVAL} seconds")
+    logger.info(f"  Check interval: {CHECK_INTERVAL} seconds ({CHECK_INTERVAL//60} minutes)")
+    logger.info(f"  Looking for: Pickleball Courts, Wed/Fri, 7-9 PM (19:00-20:00)")
     logger.info("="*70)
     
     driver = None
@@ -316,17 +351,21 @@ def run_bot():
         
         while True:
             check_count += 1
-            logger.info(f"\n[Check #{check_count}] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"\n{'='*70}")
+            logger.info(f"[Check #{check_count}] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            logger.info(f"{'='*70}")
             
             has_slots, buttons = check_for_slots(driver)
             
             if has_slots and not already_notified:
                 slot_count = len(buttons)
+                logger.info(f"\n🔔 SLOTS DETECTED! Sending notification...")
                 send_notification_email(slot_count)
                 already_notified = True
-                logger.info("✅ Notification sent! Continuing to monitor...")
+                logger.info("✅ Notification email sent! Continuing to monitor...")
             
-            logger.info(f"Next check in {CHECK_INTERVAL} seconds...")
+            logger.info(f"\n⏰ Next check in {CHECK_INTERVAL} seconds ({CHECK_INTERVAL//60} minutes)")
+            logger.info(f"Next check at: {datetime.fromtimestamp(time.time() + CHECK_INTERVAL).strftime('%Y-%m-%d %H:%M:%S')}")
             time.sleep(CHECK_INTERVAL)
     
     except KeyboardInterrupt:
