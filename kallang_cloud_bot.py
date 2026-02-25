@@ -108,56 +108,72 @@ def get_page_info(driver):
         return None
 
 def dismiss_popups(driver):
-    """Dismiss all popups and cookie dialogs"""
+    """Dismiss all popups and cookie dialogs - AGGRESSIVE VERSION"""
     try:
         logger.info("→ Dismissing popups/cookies...")
         
-        # Try multiple approaches to dismiss popups
-        accept_selectors = [
-            "//button[contains(text(), 'Accept all')]",
-            "//button[contains(text(), 'Accept')]",
-            "//button[contains(text(), 'Agree')]",
-            "//button[contains(text(), 'OK')]",
-            "//button[contains(text(), 'accept')]",
-            "//button[contains(text(), 'agree')]",
-        ]
+        # First, use JavaScript to click ANY visible "Accept" button
+        clicked = driver.execute_script("""
+            var buttons = document.querySelectorAll('button');
+            var clicked = false;
+            for (let btn of buttons) {
+                var text = btn.textContent.toLowerCase();
+                if ((text.includes('accept') || text.includes('agree') || text.includes('ok')) 
+                    && btn.offsetParent !== null) {
+                    btn.click();
+                    clicked = true;
+                    break;
+                }
+            }
+            return clicked;
+        """)
         
-        for selector in accept_selectors:
-            try:
-                buttons = driver.find_elements(By.XPATH, selector)
-                for btn in buttons:
-                    if btn.is_displayed():
-                        logger.info(f"  ✅ Clicking: {btn.text}")
-                        btn.click()
-                        time.sleep(1)
-            except:
-                pass
+        if clicked:
+            logger.info("  ✅ Clicked cookie accept button via JavaScript")
+            time.sleep(2)
         
-        # Use JavaScript to hide/remove cookie banners
+        # Second, FORCEFULLY remove ALL cookie-related elements
         driver.execute_script("""
-            // Remove common cookie/popup divs
-            var removals = [
-                document.querySelector('[class*="cookie"]'),
-                document.querySelector('[class*="popup"]'),
-                document.querySelector('[class*="banner"]'),
-                document.querySelector('[id*="cookie"]'),
-                document.querySelector('[id*="popup"]'),
-                document.querySelector('[data-testid*="cookie"]'),
+            // Remove ALL elements with cookie-related classes/IDs
+            var selectors = [
+                '[class*="cookie" i]',
+                '[class*="Cookie" i]',
+                '[id*="cookie" i]',
+                '[class*="banner" i]',
+                '[class*="popup" i]',
+                '[class*="modal" i]',
+                '[data-testid*="cookie" i]'
             ];
             
-            removals.forEach(el => {
-                if (el) {
-                    el.style.display = 'none';
-                    el.remove();
+            selectors.forEach(selector => {
+                try {
+                    var elements = document.querySelectorAll(selector);
+                    elements.forEach(el => {
+                        el.style.display = 'none';
+                        el.remove();
+                    });
+                } catch(e) {}
+            });
+            
+            // Remove any overlays
+            var allDivs = document.querySelectorAll('div');
+            allDivs.forEach(div => {
+                var style = window.getComputedStyle(div);
+                if (style.position === 'fixed' && style.zIndex > 100) {
+                    var text = div.textContent.toLowerCase();
+                    if (text.includes('cookie')) {
+                        div.remove();
+                    }
                 }
             });
             
-            // Remove overflow hidden from body
+            // Restore body scroll
             document.body.style.overflow = 'auto';
+            document.documentElement.style.overflow = 'auto';
         """)
         
-        time.sleep(2)
-        logger.info("✅ Popup dismissal complete")
+        time.sleep(1)
+        logger.info("✅ Cookie banner forcefully removed")
         return True
         
     except Exception as e:
@@ -177,6 +193,16 @@ def login(driver):
         
         # Dismiss any popups
         dismiss_popups(driver)
+        
+        # Take screenshot AFTER cookie dismissal to verify
+        take_screenshot(driver, "01b_after_cookie_dismiss")
+        
+        # Verify cookie banner is gone
+        page_text_check = driver.find_element(By.TAG_NAME, "body").text
+        if "Cookies" in page_text_check[:200]:
+            logger.warning("⚠️ Cookie banner still visible, trying again...")
+            dismiss_popups(driver)
+            time.sleep(2)
         
         # Find email field
         email_field = None
@@ -203,6 +229,10 @@ def login(driver):
         
         # Take screenshot before entering credentials
         take_screenshot(driver, "02_before_credentials")
+        
+        # Log credentials being used (hide password)
+        logger.info(f"  Using email: {KALLANG_EMAIL}")
+        logger.info(f"  Using password: {'*' * len(KALLANG_PASSWORD)}")
         
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
@@ -273,23 +303,48 @@ def login(driver):
                 take_screenshot(driver, "ERROR_no_login_button")
                 return False
         
+        # Monitor URL changes
+        initial_url = driver.current_url
+        logger.info(f"  Before login - URL: {initial_url}")
+        
         time.sleep(8)
+        
+        final_url = driver.current_url
+        logger.info(f"  After login - URL: {final_url}")
+        
+        if initial_url != final_url:
+            logger.info(f"✅ URL changed - likely logged in!")
+        else:
+            logger.warning(f"⚠️ URL unchanged - login might have failed")
         
         # Take screenshot after login
         take_screenshot(driver, "04_after_login")
         page_info = get_page_info(driver)
         
-        # Verify we're logged in
-        page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+        # Check for error messages
+        page_text = driver.find_element(By.TAG_NAME, "body").text
+        error_keywords = ['invalid', 'incorrect', 'wrong', 'error', 'failed', 'denied']
+        found_errors = [kw for kw in error_keywords if kw in page_text.lower()]
         
-        if "login" in page_text and "forgot password" in page_text:
+        if found_errors:
+            logger.error(f"❌ Login error detected: {', '.join(found_errors)}")
+            logger.error(f"📄 Error message context: {page_text[:1000]}")
+            take_screenshot(driver, "ERROR_login_error_message")
+            return False
+        
+        # Verify we're logged in
+        page_text_lower = page_text.lower()
+        
+        if "login" in page_text_lower and "forgot password" in page_text_lower:
             logger.warning("⚠️ Still on login page - login may have failed")
             take_screenshot(driver, "ERROR_still_on_login")
             time.sleep(5)
             # Check again after waiting
             page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            if "login" in page_text:
+            if "login" in page_text and "forgot password" in page_text:
                 logger.error("❌ Login failed - still seeing login page")
+                # Log the actual page content to see what's wrong
+                logger.error(f"📄 Page content: {page_text[:1000]}")
                 return False
         
         # Dismiss any post-login popups
