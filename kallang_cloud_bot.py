@@ -1,6 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version (Improved Cookie Handling)
-Handles multiple popups and waits for booking content to load
+The Kallang Pickleball Bot - Cloud Version (Session Persistence)
+Maintains login session across multiple checks
 """
 
 import os
@@ -165,6 +165,15 @@ def login(driver):
                 return False
         
         time.sleep(8)
+        
+        # Verify we're logged in by checking if we're NOT on login page
+        current_url = driver.current_url
+        page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+        
+        if "login" in page_text or "sign in" in page_text:
+            logger.warning("⚠️ Still on login page - login may have failed")
+            time.sleep(5)
+        
         logger.info("✅ Login process completed")
         return True
         
@@ -180,7 +189,6 @@ def dismiss_popups(driver):
         logger.info("→ Dismissing popups/cookies...")
         
         # Try multiple approaches to dismiss popups
-        # Approach 1: Click Accept/Agree buttons
         accept_selectors = [
             "//button[contains(text(), 'Accept all')]",
             "//button[contains(text(), 'Accept')]",
@@ -201,7 +209,7 @@ def dismiss_popups(driver):
             except:
                 pass
         
-        # Approach 2: Use JavaScript to hide/remove cookie banners
+        # Use JavaScript to hide/remove cookie banners
         logger.info("  Using JavaScript to remove overlays...")
         driver.execute_script("""
             // Remove common cookie/popup divs
@@ -233,33 +241,28 @@ def dismiss_popups(driver):
         logger.warning(f"⚠️ Error dismissing popups: {e}")
         return True
 
-def wait_for_booking_content(driver):
-    """Wait for booking page content to load"""
+def is_logged_in(driver):
+    """Check if we're still logged in by checking page content"""
     try:
-        logger.info("→ Waiting for booking content to load...")
+        page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
         
-        # Wait for pickleball or facility content
-        for attempt in range(10):
-            page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            
-            # Check if we have real booking content
-            if any(keyword in page_text for keyword in ['wednesday', 'friday', 'book now', 'facility']):
-                logger.info(f"✅ Booking content loaded (attempt {attempt + 1})")
-                return True
-            
-            logger.info(f"  Waiting... attempt {attempt + 1}/10")
-            time.sleep(1)
+        # If we see login-related text, we're NOT logged in
+        if any(keyword in page_text for keyword in ['member sign in', 'login', 'forgot password', 'not a member yet']):
+            logger.warning("⚠️ Not logged in - need to re-login")
+            return False
         
-        logger.warning("⚠️ Booking content not found after waiting")
-        return True  # Continue anyway
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Error waiting for content: {e}")
+        return True
+    except:
         return True
 
 def check_for_slots(driver):
     """Check if 7-9 PM slots are available for Wed/Fri with detailed logging"""
     try:
+        # Check if still logged in
+        if not is_logged_in(driver):
+            logger.warning("⚠️ Session expired - returning to check later")
+            return False, []
+        
         logger.info("→ Checking for available slots...")
         driver.get(BOOKING_URL)
         time.sleep(3)
@@ -267,10 +270,13 @@ def check_for_slots(driver):
         # Dismiss popups
         dismiss_popups(driver)
         
-        # Wait for content
-        wait_for_booking_content(driver)
+        # Check again if logged in
+        time.sleep(1)
+        if not is_logged_in(driver):
+            logger.warning("⚠️ Got logged out - need to re-login")
+            return False, []
         
-        time.sleep(2)
+        time.sleep(1)
         
         page_source = driver.page_source
         page_text = driver.find_element(By.TAG_NAME, "body").text
@@ -282,7 +288,7 @@ def check_for_slots(driver):
         if "pickleball" in page_source.lower():
             logger.info("✅ Pickleball court page detected")
         else:
-            logger.warning("⚠️ Pickleball mention not found - checking anyway")
+            logger.warning("⚠️ Pickleball mention not found")
         
         # Check for dates (Wed/Fri)
         has_wed = "WEDNESDAY" in page_text or "Wednesday" in page_text or "WED" in page_text
@@ -294,7 +300,7 @@ def check_for_slots(driver):
             logger.info("✅ Friday found on page")
         
         if not has_wed and not has_fri:
-            logger.warning("⚠️ Neither Wednesday nor Friday found on page")
+            logger.warning("⚠️ Neither Wednesday nor Friday found")
         
         # Check for 7-9 PM time indicators
         time_patterns = {
@@ -315,14 +321,14 @@ def check_for_slots(driver):
                 logger.info(f"  ✅ Found: {description}")
         
         if not found_times:
-            logger.info("ℹ No 7-9 PM time slots (19:00-20:00) found on page")
-            logger.info("📊 Sample of page content (first 500 chars):")
-            logger.info(page_text[:500])
+            logger.info("ℹ No 7-9 PM time slots found on page")
+            logger.info("📊 First 300 chars of page:")
+            logger.info(page_text[:300])
             return False, []
         
         logger.info(f"✅ Found {len(found_times)} time pattern(s)")
         
-        # Find all "Book" buttons with detailed info
+        # Find all "Book" buttons
         book_buttons = []
         try:
             buttons = driver.find_elements(By.XPATH, "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'book')]")
@@ -344,7 +350,7 @@ def check_for_slots(driver):
                         else:
                             logger.info(f"    ⚠️ Doesn't match 7-9 PM criteria")
                 except Exception as e:
-                    logger.info(f"  Button #{idx}: Error processing - {e}")
+                    logger.info(f"  Button #{idx}: Error processing")
                     
         except Exception as e:
             logger.error(f"Error finding buttons: {e}")
@@ -353,7 +359,7 @@ def check_for_slots(driver):
             logger.info(f"🎉 FOUND {len(book_buttons)} AVAILABLE SLOTS FOR 7-9 PM!")
             return True, book_buttons
         else:
-            logger.info("ℹ No bookable 7-9 PM slots matching criteria found")
+            logger.info("ℹ No bookable 7-9 PM slots found")
             return False, []
         
     except Exception as e:
@@ -412,7 +418,7 @@ def send_notification_email(slot_count):
             server.login(GMAIL_SENDER, GMAIL_PASSWORD)
             server.sendmail(GMAIL_SENDER, NOTIFICATION_EMAIL, msg.as_string())
         
-        logger.info(f"✅ Email sent to {NOTIFICATION_EMAIL}!")
+        logger.info(f"✅ Email sent!")
         return True
         
     except Exception as e:
@@ -422,7 +428,7 @@ def send_notification_email(slot_count):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (IMPROVED POPUP HANDLING)")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (SESSION PERSISTENCE)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
@@ -440,13 +446,11 @@ def run_bot():
         driver = setup_webdriver()
         
         if not login(driver):
-            logger.error("❌ Failed to login. Retrying...")
-            time.sleep(30)
-            driver.quit()
-            run_bot()
+            logger.error("❌ Failed to login. Exiting.")
             return
         
         logger.info("✅ Successfully logged in. Starting monitoring loop...")
+        logger.info("📌 NOTE: Keeping session alive across checks (not logging out between checks)")
         
         while True:
             check_count += 1
