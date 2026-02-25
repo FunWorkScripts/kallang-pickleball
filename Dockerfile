@@ -1,17 +1,8 @@
-FROM python:3.11-slim
+FROM ghcr.io/browserless/chrome:latest
 
-# Install Chrome dependencies
 RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Download and install Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
+    python3.11 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -21,4 +12,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY kallang_cloud_bot.py .
 
-CMD ["python", "kallang_cloud_bot.py"]
+CMD ["python3.11", "kallang_cloud_bot.py"]
