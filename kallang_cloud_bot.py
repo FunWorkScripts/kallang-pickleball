@@ -155,6 +155,12 @@ def login(driver):
         take_screenshot(driver, "01_login_page")
         get_page_info(driver)
         
+        # DISMISS COOKIES FIRST before trying to login!
+        logger.info("→ Dismissing cookies before login...")
+        dismiss_popups(driver)
+        time.sleep(2)
+        take_screenshot(driver, "01b_after_cookie_dismiss")
+        
         # Find email field
         email_field = None
         email_selectors = [
@@ -252,6 +258,30 @@ def login(driver):
         get_page_info(driver)
         
         logger.info("✅ Login process completed")
+        
+        # Wait a bit and take another screenshot to verify session is active
+        logger.info("→ Verifying session is active...")
+        time.sleep(3)
+        take_screenshot(driver, "03b_session_active_check")
+        get_page_info(driver)
+        
+        # Navigate to booking page immediately to confirm session persists
+        logger.info("→ Testing session persistence...")
+        driver.get(BOOKING_URL)
+        time.sleep(3)
+        take_screenshot(driver, "03c_booking_page_after_login")
+        get_page_info(driver)
+        
+        # Dismiss any popups
+        dismiss_popups(driver)
+        
+        # Check session again
+        logger.info("→ Checking session after popup dismissal...")
+        time.sleep(2)
+        take_screenshot(driver, "03d_session_after_popup_dismiss")
+        get_page_info(driver)
+        
+        logger.info("✅ Session verified and active!")
         return True
         
     except Exception as e:
@@ -337,6 +367,10 @@ def is_logged_in(driver):
 def check_for_slots(driver):
     """Check if 7-9 PM slots are available for Wed/Fri with detailed logging"""
     try:
+        # Take screenshot BEFORE checking session to see current state
+        logger.info("→ Taking screenshot before session check...")
+        take_screenshot(driver, "05_before_session_check")
+        
         # Check if still logged in
         if not is_logged_in(driver):
             logger.warning("⚠️ Session expired - returning to check later")
@@ -345,9 +379,6 @@ def check_for_slots(driver):
         logger.info("→ Checking for available slots...")
         driver.get(BOOKING_URL)
         time.sleep(3)
-        
-        take_screenshot(driver, "04_booking_page")
-        get_page_info(driver)
         
         # Dismiss popups
         dismiss_popups(driver)
@@ -359,6 +390,11 @@ def check_for_slots(driver):
             return False, []
         
         time.sleep(1)
+        
+        # Take screenshot after confirming session is still valid
+        logger.info("✅ Session is active - taking screenshot...")
+        take_screenshot(driver, "06_session_confirmed_booking_page")
+        get_page_info(driver)
         
         page_source = driver.page_source
         page_text = driver.find_element(By.TAG_NAME, "body").text
@@ -383,7 +419,7 @@ def check_for_slots(driver):
         
         if not has_wed and not has_fri:
             logger.warning("⚠️ Neither Wednesday nor Friday found")
-            take_screenshot(driver, "WARNING_no_wed_fri")
+            take_screenshot(driver, "06b_WARNING_no_wed_fri")
         
         # Check for 7-9 PM time indicators
         time_patterns = {
@@ -407,7 +443,7 @@ def check_for_slots(driver):
             logger.info("ℹ No 7-9 PM time slots found on page")
             logger.info("📊 First 300 chars of page:")
             logger.info(page_text[:300])
-            take_screenshot(driver, "INFO_no_time_slots")
+            take_screenshot(driver, "06c_INFO_no_time_slots")
             return False, []
         
         logger.info(f"✅ Found {len(found_times)} time pattern(s)")
@@ -441,11 +477,11 @@ def check_for_slots(driver):
         
         if book_buttons:
             logger.info(f"🎉 FOUND {len(book_buttons)} AVAILABLE SLOTS FOR 7-9 PM!")
-            take_screenshot(driver, "SUCCESS_slots_found")
+            take_screenshot(driver, "07_SUCCESS_slots_found")
             return True, book_buttons
         else:
             logger.info("ℹ No bookable 7-9 PM slots found")
-            take_screenshot(driver, "INFO_no_book_buttons")
+            take_screenshot(driver, "07_INFO_no_book_buttons")
             return False, []
         
     except Exception as e:
