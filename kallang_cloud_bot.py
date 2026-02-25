@@ -17,6 +17,9 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
+import base64
+import requests
+import json
 
 # Configure logging
 logging.basicConfig(
@@ -74,18 +77,61 @@ def setup_webdriver():
         logger.error(f"❌ Failed to initialize WebDriver: {e}")
         raise
 
+def upload_to_imgur(image_path):
+    """Upload screenshot to Imgur and return public URL"""
+    try:
+        # Imgur's anonymous upload API
+        # Using a public client ID for anonymous uploads
+        client_id = "546c25a59c58ad7"  # Public Imgur client ID
+        
+        with open(image_path, 'rb') as f:
+            image_data = base64.b64encode(f.read()).decode('utf-8')
+        
+        headers = {
+            'Authorization': f'Client-ID {client_id}'
+        }
+        
+        data = {
+            'image': image_data,
+            'type': 'base64'
+        }
+        
+        response = requests.post(
+            'https://api.imgur.com/3/upload',
+            headers=headers,
+            data=data,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            imgur_url = result['data']['link']
+            logger.info(f"🔗 View screenshot: {imgur_url}")
+            return imgur_url
+        else:
+            logger.warning(f"⚠️ Imgur upload failed: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Imgur upload error: {e}")
+        return None
+
 def take_screenshot(driver, name="screenshot"):
-    """Take a screenshot and save it with timestamp"""
+    """Take a screenshot, save it, and upload to Imgur"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"/tmp/{name}_{timestamp}.png"
     
     try:
         driver.save_screenshot(filename)
         logger.info(f"📸 Screenshot saved: {filename}")
-        return filename
+        
+        # Upload to Imgur for easy viewing
+        imgur_url = upload_to_imgur(filename)
+        
+        return filename, imgur_url
     except Exception as e:
         logger.error(f"❌ Failed to take screenshot: {e}")
-        return None
+        return None, None
 
 def get_page_info(driver):
     """Get detailed page information for debugging"""
