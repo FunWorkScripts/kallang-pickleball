@@ -108,137 +108,79 @@ def get_page_info(driver):
         return None
 
 def dismiss_popups(driver):
-    """Dismiss all popups and cookie dialogs - ULTRA AGGRESSIVE VERSION"""
+    """Dismiss cookie dialog and wait for it to actually disappear"""
     try:
-        logger.info("→ Dismissing popups/cookies...")
+        logger.info("→ Dismissing cookie popup...")
         
-        # Strategy 1: Wait for and click "Accept all" button explicitly
-        accept_button_selectors = [
-            (By.XPATH, "//button[contains(text(), 'Accept all')]"),
-            (By.XPATH, "//button[contains(text(), 'Accept All')]"),
-            (By.XPATH, "//button[contains(text(), 'ACCEPT ALL')]"),
-            (By.XPATH, "//*[contains(text(), 'Accept all')]"),
-            (By.CSS_SELECTOR, "button[class*='accept']"),
-            (By.CSS_SELECTOR, "button[class*='Accept']"),
-        ]
-        
-        button_clicked = False
-        for selector_type, selector_value in accept_button_selectors:
+        # Find and click "Accept all" button - WAIT for it
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            logger.info(f"  Attempt {attempt + 1}/{max_attempts}")
+            
+            # Try to find the Accept all button
             try:
-                button = WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((selector_type, selector_value))
+                # Look for button with text "Accept all" (case insensitive)
+                accept_button = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]"))
                 )
-                logger.info(f"  ✅ Found Accept button: {selector_value}")
-                button.click()
-                logger.info(f"  ✅ Clicked Accept button!")
-                button_clicked = True
+                logger.info(f"  ✅ Found 'Accept all' button")
+                accept_button.click()
+                logger.info(f"  ✅ Clicked 'Accept all'")
                 time.sleep(3)
-                break
-            except:
-                continue
+                
+                # Wait for cookie text to disappear
+                logger.info("  → Waiting for cookie banner to disappear...")
+                for check in range(5):
+                    page_text = driver.find_element(By.TAG_NAME, "body").text
+                    if "accept all" not in page_text.lower() and "cookies" not in page_text[:200].lower():
+                        logger.info(f"  ✅ Cookie banner gone! (check #{check + 1})")
+                        return True
+                    time.sleep(2)
+                    logger.info(f"  ⏳ Still seeing cookie text... (check #{check + 1}/5)")
+                
+            except Exception as e:
+                logger.info(f"  ⚠️ Attempt {attempt + 1} failed: {e}")
+                time.sleep(2)
         
-        if not button_clicked:
-            logger.info("  → Accept button not found via Selenium, trying JavaScript...")
-            # Strategy 2: JavaScript click on ANY button with "accept" text
-            clicked = driver.execute_script("""
-                var buttons = document.querySelectorAll('button, a, div[role="button"]');
-                var clicked = false;
-                for (let btn of buttons) {
-                    var text = btn.textContent.toLowerCase();
-                    if ((text.includes('accept all') || text.includes('accept')) 
-                        && btn.offsetParent !== null) {
-                        btn.click();
-                        clicked = true;
-                        console.log('Clicked: ' + btn.textContent);
-                        break;
-                    }
-                }
-                return clicked;
-            """)
-            
-            if clicked:
-                logger.info("  ✅ Clicked cookie accept button via JavaScript")
-                time.sleep(3)
-        
-        # Strategy 3: FORCEFULLY remove ALL cookie-related elements
-        logger.info("  → Forcefully removing cookie elements...")
+        # If we get here, clicking didn't work - try JavaScript
+        logger.warning("  ⚠️ Button click didn't work, trying JavaScript removal...")
         driver.execute_script("""
-            // Remove ALL elements containing "cookie" in class or ID
-            var cookieElements = document.querySelectorAll('[class*="cookie" i], [class*="Cookie" i], [id*="cookie" i], [id*="Cookie" i]');
-            console.log('Found ' + cookieElements.length + ' cookie elements');
-            cookieElements.forEach(el => {
-                el.remove();
-            });
-            
-            // Remove common modal/overlay patterns
-            var overlays = document.querySelectorAll('[class*="overlay" i], [class*="modal" i], [class*="backdrop" i]');
-            console.log('Found ' + overlays.length + ' overlay elements');
-            overlays.forEach(el => {
-                if (el.style.zIndex > 100) {
-                    el.remove();
+            // Find and click accept button
+            var buttons = document.querySelectorAll('button, a, div');
+            for (let btn of buttons) {
+                var text = btn.textContent.toLowerCase();
+                if (text.includes('accept all')) {
+                    btn.click();
+                    console.log('JS clicked: ' + btn.textContent);
+                    break;
                 }
-            });
+            }
             
-            // Remove any fixed-position divs with high z-index
-            var allDivs = document.querySelectorAll('div');
-            var removed = 0;
-            allDivs.forEach(div => {
-                var style = window.getComputedStyle(div);
-                if (style.position === 'fixed' && parseInt(style.zIndex) > 500) {
-                    var text = div.textContent.toLowerCase();
-                    if (text.includes('cookie') || text.includes('accept')) {
+            // Remove all cookie-related elements
+            setTimeout(function() {
+                var cookieElements = document.querySelectorAll('[class*="cookie" i], [id*="cookie" i]');
+                cookieElements.forEach(el => el.remove());
+                
+                // Remove any fixed overlays
+                var allDivs = document.querySelectorAll('div');
+                allDivs.forEach(div => {
+                    var style = window.getComputedStyle(div);
+                    if (style.position === 'fixed' && parseInt(style.zIndex) > 500) {
                         div.remove();
-                        removed++;
                     }
-                }
-            });
-            console.log('Removed ' + removed + ' fixed elements');
-            
-            // Restore body scroll
-            document.body.style.overflow = 'auto';
-            document.documentElement.style.overflow = 'auto';
+                });
+                
+                document.body.style.overflow = 'auto';
+            }, 1000);
         """)
         
-        time.sleep(2)
-        
-        # Verify the cookie text is gone
-        page_text = driver.find_element(By.TAG_NAME, "body").text
-        if "Cookies" in page_text[:300]:
-            logger.warning("  ⚠️ Cookie text still visible, trying one more time...")
-            # Nuclear option: remove everything from the page that mentions cookies
-            driver.execute_script("""
-                var walker = document.createTreeWalker(
-                    document.body,
-                    NodeFilter.SHOW_ELEMENT,
-                    null,
-                    false
-                );
-                
-                var nodesToRemove = [];
-                while(walker.nextNode()) {
-                    var node = walker.currentNode;
-                    if (node.textContent.toLowerCase().includes('cookie') && 
-                        node.textContent.length < 1000) {
-                        nodesToRemove.push(node);
-                    }
-                }
-                
-                nodesToRemove.forEach(node => {
-                    try {
-                        node.remove();
-                    } catch(e) {}
-                });
-            """)
-            time.sleep(1)
-            logger.info("  ✅ Nuclear cookie removal completed")
-        else:
-            logger.info("  ✅ Cookie banner successfully removed!")
-        
+        time.sleep(3)
+        logger.info("  ✅ JavaScript removal executed")
         return True
         
     except Exception as e:
-        logger.warning(f"⚠️ Error dismissing popups: {e}")
-        return True
+        logger.warning(f"⚠️ Error dismissing cookies: {e}")
+        return False
 
 def login(driver):
     """Login to The Kallang account with screenshot debugging"""
@@ -254,19 +196,36 @@ def login(driver):
         # Dismiss any popups
         dismiss_popups(driver)
         
-        # Take screenshot AFTER cookie dismissal to verify
+        # CRITICAL: Verify cookie banner is actually gone before proceeding
         take_screenshot(driver, "01b_after_cookie_dismiss")
         
-        # Verify cookie banner is gone
         page_text_check = driver.find_element(By.TAG_NAME, "body").text
-        if "Cookies" in page_text_check[:200]:
-            logger.warning("⚠️ Cookie banner still visible, trying again...")
-            dismiss_popups(driver)
-            time.sleep(2)
-        else:
-            logger.info("✅ Cookie banner confirmed removed!")
+        if "accept all" in page_text_check.lower()[:500]:
+            logger.error("❌ Cookie banner STILL showing after dismissal!")
+            logger.error(f"📄 Current page text: {page_text_check[:500]}")
+            take_screenshot(driver, "ERROR_cookie_still_present")
+            
+            # Try ONE more time
+            logger.info("→ Making final attempt to dismiss cookie...")
+            driver.execute_script("""
+                // Click every button that contains "accept"
+                var allButtons = document.querySelectorAll('*');
+                for (let el of allButtons) {
+                    if (el.textContent.toLowerCase().includes('accept all')) {
+                        el.click();
+                        console.log('Clicked: ' + el.tagName);
+                    }
+                }
+            """)
+            time.sleep(5)
+            
+            # Check one more time
+            page_text_final = driver.find_element(By.TAG_NAME, "body").text
+            if "accept all" in page_text_final.lower()[:500]:
+                logger.error("❌ Cookie banner persists - cannot proceed with login")
+                return False
         
-        # Wait for login form to be fully visible
+        logger.info("✅ Cookie banner confirmed removed!")
         logger.info("→ Waiting for login form to be visible...")
         time.sleep(3)
         
@@ -317,6 +276,16 @@ def login(driver):
         
         # Try to find and click login button
         logger.info("→ Looking for login button...")
+        
+        # First, let's see what buttons are actually on the page
+        all_buttons = driver.find_elements(By.TAG_NAME, "button")
+        logger.info(f"  Found {len(all_buttons)} total buttons on page")
+        for i, btn in enumerate(all_buttons[:5]):  # Show first 5
+            try:
+                btn_text = btn.text or btn.get_attribute("value") or btn.get_attribute("type")
+                logger.info(f"  Button {i+1}: '{btn_text}'")
+            except:
+                pass
         
         button_found = False
         button_selectors = [
