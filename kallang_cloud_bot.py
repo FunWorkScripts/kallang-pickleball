@@ -685,24 +685,87 @@ def run_bot():
     driver = None
     check_count = 0
     already_notified = False
+    max_login_attempts = 3
+    login_attempt = 0
     
     try:
         validate_config()
-        driver = setup_webdriver()
         
-        if not login(driver):
-            logger.error("❌ Failed to login. Exiting.")
-            return
+        # LOGIN RETRY LOOP: Keep trying until login succeeds
+        while login_attempt < max_login_attempts:
+            login_attempt += 1
+            logger.info(f"\n{'='*70}")
+            logger.info(f"🔐 LOGIN ATTEMPT #{login_attempt}/{max_login_attempts}")
+            logger.info(f"{'='*70}")
+            
+            driver = setup_webdriver()
+            
+            if login(driver):
+                logger.info("✅ Login successful!")
+                
+                # Verify we actually reached the booking page
+                logger.info("→ Verifying we reached booking page...")
+                time.sleep(2)
+                current_url = driver.current_url
+                page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+                
+                if "facilityBooking" in current_url or "book" in page_text[:500]:
+                    logger.info("✅ Confirmed: Booking page reached!")
+                    take_screenshot(driver, "LOGIN_SUCCESS_booking_page")
+                    break  # Exit login loop - we're logged in!
+                else:
+                    logger.warning("⚠️ Reached login but not booking page yet")
+                    time.sleep(3)
+                    driver.quit()
+                    continue
+            else:
+                logger.error(f"❌ Login attempt #{login_attempt} failed")
+                if driver:
+                    driver.quit()
+                
+                if login_attempt < max_login_attempts:
+                    logger.info(f"→ Retrying in 5 seconds... (Attempt {login_attempt + 1}/{max_login_attempts})")
+                    random_delay(3, 7)
+                else:
+                    logger.error("❌ All login attempts failed. Exiting.")
+                    return
         
         logger.info("✅ Successfully logged in. Starting monitoring loop...")
         logger.info("📌 NOTE: Keeping session alive across checks (not logging out between checks)")
+        logger.info("📌 NOTE: Will auto re-login if session expires")
         logger.info("📸 Screenshots enabled for debugging")
         
+        # MAIN MONITORING LOOP
         while True:
             check_count += 1
             logger.info(f"\n{'='*70}")
             logger.info(f"[Check #{check_count}] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logger.info(f"{'='*70}")
+            
+            # Check if still logged in
+            if not is_logged_in(driver):
+                logger.warning("⚠️ Session expired - attempting to re-login...")
+                driver.quit()
+                
+                # Try to re-login (up to 3 times)
+                relogin_attempt = 0
+                while relogin_attempt < max_login_attempts:
+                    relogin_attempt += 1
+                    logger.info(f"→ Re-login attempt #{relogin_attempt}/{max_login_attempts}")
+                    
+                    driver = setup_webdriver()
+                    if login(driver):
+                        logger.info("✅ Re-login successful!")
+                        break
+                    else:
+                        logger.warning(f"❌ Re-login attempt #{relogin_attempt} failed")
+                        if driver:
+                            driver.quit()
+                        if relogin_attempt < max_login_attempts:
+                            random_delay(3, 7)
+                        else:
+                            logger.error(f"❌ Could not re-login after {max_login_attempts} attempts. Exiting.")
+                            return
             
             has_slots, buttons = check_for_slots(driver)
             
