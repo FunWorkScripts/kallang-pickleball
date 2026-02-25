@@ -1,6 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version (With Cookie Handling)
-Accepts cookies popup before checking for slots
+The Kallang Pickleball Bot - Cloud Version (Improved Cookie Handling)
+Handles multiple popups and waits for booking content to load
 """
 
 import os
@@ -174,39 +174,88 @@ def login(driver):
         logger.error(traceback.format_exc())
         return False
 
-def accept_cookies(driver):
-    """Accept cookie popup if present"""
+def dismiss_popups(driver):
+    """Dismiss all popups and cookie dialogs"""
     try:
-        logger.info("→ Checking for cookie popup...")
+        logger.info("→ Dismissing popups/cookies...")
         
-        # Try multiple selectors for cookie accept button
-        cookie_selectors = [
-            (By.XPATH, "//button[contains(text(), 'Accept all')]"),
-            (By.XPATH, "//button[contains(text(), 'Accept')]"),
-            (By.XPATH, "//button[contains(text(), 'accept')]"),
-            (By.CSS_SELECTOR, "button[class*='accept']"),
-            (By.XPATH, "//button[contains(., 'Accept')]"),
+        # Try multiple approaches to dismiss popups
+        # Approach 1: Click Accept/Agree buttons
+        accept_selectors = [
+            "//button[contains(text(), 'Accept all')]",
+            "//button[contains(text(), 'Accept')]",
+            "//button[contains(text(), 'Agree')]",
+            "//button[contains(text(), 'OK')]",
+            "//button[contains(text(), 'accept')]",
+            "//button[contains(text(), 'agree')]",
         ]
         
-        for selector_type, selector_value in cookie_selectors:
+        for selector in accept_selectors:
             try:
-                cookie_button = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((selector_type, selector_value))
-                )
-                logger.info("✅ Found cookie accept button - clicking...")
-                cookie_button.click()
-                time.sleep(2)
-                logger.info("✅ Cookies accepted!")
-                return True
+                buttons = driver.find_elements(By.XPATH, selector)
+                for btn in buttons:
+                    if btn.is_displayed():
+                        logger.info(f"  Clicking: {btn.text}")
+                        btn.click()
+                        time.sleep(1)
             except:
-                continue
+                pass
         
-        logger.info("ℹ No cookie popup found (or already accepted)")
+        # Approach 2: Use JavaScript to hide/remove cookie banners
+        logger.info("  Using JavaScript to remove overlays...")
+        driver.execute_script("""
+            // Remove common cookie/popup divs
+            var removals = [
+                document.querySelector('[class*="cookie"]'),
+                document.querySelector('[class*="popup"]'),
+                document.querySelector('[class*="banner"]'),
+                document.querySelector('[id*="cookie"]'),
+                document.querySelector('[id*="popup"]'),
+                document.querySelector('[data-testid*="cookie"]'),
+            ];
+            
+            removals.forEach(el => {
+                if (el) {
+                    el.style.display = 'none';
+                    el.remove();
+                }
+            });
+            
+            // Remove overflow hidden from body
+            document.body.style.overflow = 'auto';
+        """)
+        
+        time.sleep(2)
+        logger.info("✅ Popup dismissal complete")
         return True
         
     except Exception as e:
-        logger.warning(f"⚠️ Error handling cookies: {e}")
+        logger.warning(f"⚠️ Error dismissing popups: {e}")
+        return True
+
+def wait_for_booking_content(driver):
+    """Wait for booking page content to load"""
+    try:
+        logger.info("→ Waiting for booking content to load...")
+        
+        # Wait for pickleball or facility content
+        for attempt in range(10):
+            page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+            
+            # Check if we have real booking content
+            if any(keyword in page_text for keyword in ['wednesday', 'friday', 'book now', 'facility']):
+                logger.info(f"✅ Booking content loaded (attempt {attempt + 1})")
+                return True
+            
+            logger.info(f"  Waiting... attempt {attempt + 1}/10")
+            time.sleep(1)
+        
+        logger.warning("⚠️ Booking content not found after waiting")
         return True  # Continue anyway
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error waiting for content: {e}")
+        return True
 
 def check_for_slots(driver):
     """Check if 7-9 PM slots are available for Wed/Fri with detailed logging"""
@@ -215,10 +264,13 @@ def check_for_slots(driver):
         driver.get(BOOKING_URL)
         time.sleep(3)
         
-        # Accept cookies if popup appears
-        accept_cookies(driver)
+        # Dismiss popups
+        dismiss_popups(driver)
         
-        time.sleep(2)  # Wait after accepting cookies
+        # Wait for content
+        wait_for_booking_content(driver)
+        
+        time.sleep(2)
         
         page_source = driver.page_source
         page_text = driver.find_element(By.TAG_NAME, "body").text
@@ -370,7 +422,7 @@ def send_notification_email(slot_count):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (WITH COOKIE HANDLING)")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (IMPROVED POPUP HANDLING)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
