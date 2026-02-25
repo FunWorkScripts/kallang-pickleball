@@ -1,7 +1,6 @@
 """
-The Kallang Pickleball Bot - Cloud Version with Screenshot Debugging
-Maintains login session across multiple checks
-Enhanced with screenshot debugging for troubleshooting
+The Kallang Pickleball Bot - Cloud Version (Session Persistence + Screenshots)
+Maintains login session across multiple checks with screenshot debugging
 """
 
 import os
@@ -16,10 +15,8 @@ from selenium.webdriver.chrome.options import Options
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
 import base64
 import requests
-import json
 
 # Configure logging
 logging.basicConfig(
@@ -34,9 +31,8 @@ KALLANG_PASSWORD = os.getenv('KALLANG_PASSWORD')
 NOTIFICATION_EMAIL = os.getenv('NOTIFICATION_EMAIL')
 GMAIL_SENDER = os.getenv('GMAIL_SENDER')
 GMAIL_PASSWORD = os.getenv('GMAIL_APP_PASSWORD')
-CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '3600'))
+CHECK_INTERVAL = int(os.getenv('CHECK_INTERVAL', '300'))
 
-# CORRECT URLs for The Kallang (PerfectGym system)
 LOGIN_URL = "https://thekallang.perfectgym.com/clientportal2/#/Login"
 BOOKING_URL = "https://thekallang.perfectgym.com/clientportal2/#/FacilityBooking?clubId=1&zoneTypeId=42"
 
@@ -63,7 +59,6 @@ def setup_webdriver():
         chrome_options.add_argument('--disable-notifications')
         chrome_options.add_argument('--disable-popup-blocking')
         chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('--window-size=1920,1080')
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -80,9 +75,7 @@ def setup_webdriver():
 def upload_to_imgur(image_path):
     """Upload screenshot to Imgur and return public URL"""
     try:
-        # Imgur's anonymous upload API
-        # Using a public client ID for anonymous uploads
-        client_id = "546c25a59c58ad7"  # Public Imgur client ID
+        client_id = "546c25a59c58ad7"
         
         with open(image_path, 'rb') as f:
             image_data = base64.b64encode(f.read()).decode('utf-8')
@@ -125,7 +118,6 @@ def take_screenshot(driver, name="screenshot"):
         driver.save_screenshot(filename)
         logger.info(f"📸 Screenshot saved: {filename}")
         
-        # Upload to Imgur for easy viewing
         imgur_url = upload_to_imgur(filename)
         
         return filename, imgur_url
@@ -153,127 +145,15 @@ def get_page_info(driver):
         logger.error(f"❌ Error getting page info: {e}")
         return None
 
-def dismiss_popups(driver):
-    """Dismiss cookie dialog and wait for it to actually disappear"""
-    try:
-        logger.info("→ Dismissing cookie popup...")
-        
-        # Find and click "Accept all" button - WAIT for it
-        max_attempts = 3
-        for attempt in range(max_attempts):
-            logger.info(f"  Attempt {attempt + 1}/{max_attempts}")
-            
-            # Try to find the Accept all button
-            try:
-                # Look for button with text "Accept all" (case insensitive)
-                accept_button = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//*[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]"))
-                )
-                logger.info(f"  ✅ Found 'Accept all' button")
-                accept_button.click()
-                logger.info(f"  ✅ Clicked 'Accept all'")
-                time.sleep(3)
-                
-                # Wait for cookie text to disappear
-                logger.info("  → Waiting for cookie banner to disappear...")
-                for check in range(5):
-                    page_text = driver.find_element(By.TAG_NAME, "body").text
-                    if "accept all" not in page_text.lower() and "cookies" not in page_text[:200].lower():
-                        logger.info(f"  ✅ Cookie banner gone! (check #{check + 1})")
-                        return True
-                    time.sleep(2)
-                    logger.info(f"  ⏳ Still seeing cookie text... (check #{check + 1}/5)")
-                
-            except Exception as e:
-                logger.info(f"  ⚠️ Attempt {attempt + 1} failed: {e}")
-                time.sleep(2)
-        
-        # If we get here, clicking didn't work - try JavaScript
-        logger.warning("  ⚠️ Button click didn't work, trying JavaScript removal...")
-        driver.execute_script("""
-            // Find and click accept button
-            var buttons = document.querySelectorAll('button, a, div');
-            for (let btn of buttons) {
-                var text = btn.textContent.toLowerCase();
-                if (text.includes('accept all')) {
-                    btn.click();
-                    console.log('JS clicked: ' + btn.textContent);
-                    break;
-                }
-            }
-            
-            // Remove all cookie-related elements
-            setTimeout(function() {
-                var cookieElements = document.querySelectorAll('[class*="cookie" i], [id*="cookie" i]');
-                cookieElements.forEach(el => el.remove());
-                
-                // Remove any fixed overlays
-                var allDivs = document.querySelectorAll('div');
-                allDivs.forEach(div => {
-                    var style = window.getComputedStyle(div);
-                    if (style.position === 'fixed' && parseInt(style.zIndex) > 500) {
-                        div.remove();
-                    }
-                });
-                
-                document.body.style.overflow = 'auto';
-            }, 1000);
-        """)
-        
-        time.sleep(3)
-        logger.info("  ✅ JavaScript removal executed")
-        return True
-        
-    except Exception as e:
-        logger.warning(f"⚠️ Error dismissing cookies: {e}")
-        return False
-
 def login(driver):
-    """Login to The Kallang account with screenshot debugging"""
+    """Login to The Kallang account"""
     try:
         logger.info("→ Attempting to login...")
         driver.get(LOGIN_URL)
         time.sleep(5)
         
-        # Take screenshot of login page
         take_screenshot(driver, "01_login_page")
         get_page_info(driver)
-        
-        # Dismiss any popups
-        dismiss_popups(driver)
-        
-        # CRITICAL: Verify cookie banner is actually gone before proceeding
-        take_screenshot(driver, "01b_after_cookie_dismiss")
-        
-        page_text_check = driver.find_element(By.TAG_NAME, "body").text
-        if "accept all" in page_text_check.lower()[:500]:
-            logger.error("❌ Cookie banner STILL showing after dismissal!")
-            logger.error(f"📄 Current page text: {page_text_check[:500]}")
-            take_screenshot(driver, "ERROR_cookie_still_present")
-            
-            # Try ONE more time
-            logger.info("→ Making final attempt to dismiss cookie...")
-            driver.execute_script("""
-                // Click every button that contains "accept"
-                var allButtons = document.querySelectorAll('*');
-                for (let el of allButtons) {
-                    if (el.textContent.toLowerCase().includes('accept all')) {
-                        el.click();
-                        console.log('Clicked: ' + el.tagName);
-                    }
-                }
-            """)
-            time.sleep(5)
-            
-            # Check one more time
-            page_text_final = driver.find_element(By.TAG_NAME, "body").text
-            if "accept all" in page_text_final.lower()[:500]:
-                logger.error("❌ Cookie banner persists - cannot proceed with login")
-                return False
-        
-        logger.info("✅ Cookie banner confirmed removed!")
-        logger.info("→ Waiting for login form to be visible...")
-        time.sleep(3)
         
         # Find email field
         email_field = None
@@ -288,7 +168,7 @@ def login(driver):
                 email_field = WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((selector_type, selector_value))
                 )
-                logger.info(f"✅ Found email field with: {selector_value}")
+                logger.info("✅ Found email field!")
                 break
             except:
                 continue
@@ -297,13 +177,6 @@ def login(driver):
             logger.error("❌ Could not find email input field")
             take_screenshot(driver, "ERROR_no_email_field")
             return False
-        
-        # Take screenshot before entering credentials
-        take_screenshot(driver, "02_before_credentials")
-        
-        # Log credentials being used (hide password)
-        logger.info(f"  Using email: {KALLANG_EMAIL}")
-        logger.info(f"  Using password: {'*' * len(KALLANG_PASSWORD)}")
         
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
@@ -317,21 +190,10 @@ def login(driver):
         logger.info("✅ Password entered")
         time.sleep(2)
         
-        # Take screenshot before clicking login
-        take_screenshot(driver, "03_before_login_click")
+        take_screenshot(driver, "02_before_login_click")
         
         # Try to find and click login button
         logger.info("→ Looking for login button...")
-        
-        # First, let's see what buttons are actually on the page
-        all_buttons = driver.find_elements(By.TAG_NAME, "button")
-        logger.info(f"  Found {len(all_buttons)} total buttons on page")
-        for i, btn in enumerate(all_buttons[:5]):  # Show first 5
-            try:
-                btn_text = btn.text or btn.get_attribute("value") or btn.get_attribute("type")
-                logger.info(f"  Button {i+1}: '{btn_text}'")
-            except:
-                pass
         
         button_found = False
         button_selectors = [
@@ -384,56 +246,12 @@ def login(driver):
                 take_screenshot(driver, "ERROR_no_login_button")
                 return False
         
-        # Monitor URL changes
-        initial_url = driver.current_url
-        logger.info(f"  Before login - URL: {initial_url}")
-        
         time.sleep(8)
         
-        final_url = driver.current_url
-        logger.info(f"  After login - URL: {final_url}")
-        
-        if initial_url != final_url:
-            logger.info(f"✅ URL changed - likely logged in!")
-        else:
-            logger.warning(f"⚠️ URL unchanged - login might have failed")
-        
-        # Take screenshot after login
-        take_screenshot(driver, "04_after_login")
-        page_info = get_page_info(driver)
-        
-        # Check for error messages
-        page_text = driver.find_element(By.TAG_NAME, "body").text
-        error_keywords = ['invalid', 'incorrect', 'wrong', 'error', 'failed', 'denied']
-        found_errors = [kw for kw in error_keywords if kw in page_text.lower()]
-        
-        if found_errors:
-            logger.error(f"❌ Login error detected: {', '.join(found_errors)}")
-            logger.error(f"📄 Full page text:")
-            logger.error(page_text)
-            take_screenshot(driver, "ERROR_login_error_message")
-            return False
-        
-        # Verify we're logged in
-        page_text_lower = page_text.lower()
-        
-        if "login" in page_text_lower and "forgot password" in page_text_lower:
-            logger.warning("⚠️ Still on login page - login may have failed")
-            take_screenshot(driver, "ERROR_still_on_login")
-            time.sleep(5)
-            # Check again after waiting
-            page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            if "login" in page_text and "forgot password" in page_text:
-                logger.error("❌ Login failed - still seeing login page")
-                # Log the actual page content to see what's wrong
-                logger.error(f"📄 Page content: {page_text[:1000]}")
-                return False
-        
-        # Dismiss any post-login popups
-        dismiss_popups(driver)
+        take_screenshot(driver, "03_after_login")
+        get_page_info(driver)
         
         logger.info("✅ Login process completed")
-        take_screenshot(driver, "05_login_completed")
         return True
         
     except Exception as e:
@@ -442,6 +260,64 @@ def login(driver):
         import traceback
         logger.error(traceback.format_exc())
         return False
+
+def dismiss_popups(driver):
+    """Dismiss all popups and cookie dialogs"""
+    try:
+        logger.info("→ Dismissing popups/cookies...")
+        
+        # Try multiple approaches to dismiss popups
+        accept_selectors = [
+            "//button[contains(text(), 'Accept all')]",
+            "//button[contains(text(), 'Accept')]",
+            "//button[contains(text(), 'Agree')]",
+            "//button[contains(text(), 'OK')]",
+            "//button[contains(text(), 'accept')]",
+            "//button[contains(text(), 'agree')]",
+        ]
+        
+        for selector in accept_selectors:
+            try:
+                buttons = driver.find_elements(By.XPATH, selector)
+                for btn in buttons:
+                    if btn.is_displayed():
+                        logger.info(f"  Clicking: {btn.text}")
+                        btn.click()
+                        time.sleep(1)
+            except:
+                pass
+        
+        # Use JavaScript to hide/remove cookie banners
+        logger.info("  Using JavaScript to remove overlays...")
+        driver.execute_script("""
+            // Remove common cookie/popup divs
+            var removals = [
+                document.querySelector('[class*="cookie"]'),
+                document.querySelector('[class*="popup"]'),
+                document.querySelector('[class*="banner"]'),
+                document.querySelector('[id*="cookie"]'),
+                document.querySelector('[id*="popup"]'),
+                document.querySelector('[data-testid*="cookie"]'),
+            ];
+            
+            removals.forEach(el => {
+                if (el) {
+                    el.style.display = 'none';
+                    el.remove();
+                }
+            });
+            
+            // Remove overflow hidden from body
+            document.body.style.overflow = 'auto';
+        """)
+        
+        time.sleep(2)
+        logger.info("✅ Popup dismissal complete")
+        return True
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Error dismissing popups: {e}")
+        return True
 
 def is_logged_in(driver):
     """Check if we're still logged in by checking page content"""
@@ -470,8 +346,7 @@ def check_for_slots(driver):
         driver.get(BOOKING_URL)
         time.sleep(3)
         
-        # Take screenshot of booking page
-        take_screenshot(driver, "06_booking_page")
+        take_screenshot(driver, "04_booking_page")
         get_page_info(driver)
         
         # Dismiss popups
@@ -529,7 +404,7 @@ def check_for_slots(driver):
                 logger.info(f"  ✅ Found: {description}")
         
         if not found_times:
-            logger.info("ℹ️ No 7-9 PM time slots found on page")
+            logger.info("ℹ No 7-9 PM time slots found on page")
             logger.info("📊 First 300 chars of page:")
             logger.info(page_text[:300])
             take_screenshot(driver, "INFO_no_time_slots")
@@ -569,7 +444,7 @@ def check_for_slots(driver):
             take_screenshot(driver, "SUCCESS_slots_found")
             return True, book_buttons
         else:
-            logger.info("ℹ️ No bookable 7-9 PM slots found")
+            logger.info("ℹ No bookable 7-9 PM slots found")
             take_screenshot(driver, "INFO_no_book_buttons")
             return False, []
         
@@ -580,14 +455,14 @@ def check_for_slots(driver):
         logger.error(traceback.format_exc())
         return False, []
 
-def send_notification_email(slot_count, screenshots=[]):
-    """Send email notification with screenshots when slots are found"""
+def send_notification_email(slot_count):
+    """Send email notification that slots were found"""
     try:
         logger.info("→ Sending notification email...")
         
         subject = f"🏓 KALLANG PICKLEBALL - {slot_count} SLOTS FOUND!"
         
-        html_body = f'''
+        html_body = f"""
         <html>
             <head>
                 <style>
@@ -610,15 +485,15 @@ def send_notification_email(slot_count, screenshots=[]):
                     <div class="action">
                         <h3>⚡ QUICK ACTION REQUIRED:</h3>
                         <p>Log in to The Kallang and complete your booking:</p>
-                        <a href="{BOOKING_URL}" class="button">BOOK NOW →</a>
+                        <a href="https://thekallang.perfectgym.com/clientportal2/#/FacilityBooking?clubId=1&zoneTypeId=42" 
+                           class="button">BOOK NOW →</a>
                     </div>
                     
                     <p><strong>⏱️ Time is limited!</strong> Slots disappear fast.</p>
-                    <p><small>Screenshots of available slots are attached to this email.</small></p>
                 </div>
             </body>
         </html>
-        '''
+        """
         
         msg = MIMEMultipart("alternative")
         msg['Subject'] = subject
@@ -626,21 +501,11 @@ def send_notification_email(slot_count, screenshots=[]):
         msg['To'] = NOTIFICATION_EMAIL
         msg.attach(MIMEText(html_body, "html"))
         
-        # Attach screenshots if available
-        for screenshot_path in screenshots:
-            if os.path.exists(screenshot_path):
-                with open(screenshot_path, 'rb') as f:
-                    img = MIMEImage(f.read())
-                    img.add_header('Content-Disposition', 'attachment', 
-                                 filename=os.path.basename(screenshot_path))
-                    msg.attach(img)
-                    logger.info(f"  📎 Attached: {os.path.basename(screenshot_path)}")
-        
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
             server.login(GMAIL_SENDER, GMAIL_PASSWORD)
             server.sendmail(GMAIL_SENDER, NOTIFICATION_EMAIL, msg.as_string())
         
-        logger.info(f"✅ Email sent with {len(screenshots)} screenshot(s)!")
+        logger.info(f"✅ Email sent!")
         return True
         
     except Exception as e:
@@ -650,14 +515,14 @@ def send_notification_email(slot_count, screenshots=[]):
 def run_bot():
     """Main bot loop"""
     logger.info("="*70)
-    logger.info("🏓 THE KALLANG PICKLEBALL BOT - WITH SCREENSHOT DEBUG")
+    logger.info("🏓 THE KALLANG PICKLEBALL BOT STARTED (WITH SCREENSHOTS)")
     logger.info("="*70)
     logger.info(f"Configuration:")
     logger.info(f"  Email: {KALLANG_EMAIL}")
     logger.info(f"  Notification: {NOTIFICATION_EMAIL}")
     logger.info(f"  Check interval: {CHECK_INTERVAL} seconds ({CHECK_INTERVAL//60} minutes)")
     logger.info(f"  Looking for: Pickleball Courts, Wed/Fri, 7-9 PM (19:00-20:00)")
-    logger.info(f"  Screenshots: Saved to /tmp/ and attached to emails")
+    logger.info(f"  Screenshots: Enabled (saved to /tmp and uploaded to Imgur)")
     logger.info("="*70)
     
     driver = None
@@ -670,12 +535,11 @@ def run_bot():
         
         if not login(driver):
             logger.error("❌ Failed to login. Exiting.")
-            logger.error("📸 Check screenshots in /tmp/ for debugging")
             return
         
         logger.info("✅ Successfully logged in. Starting monitoring loop...")
-        logger.info("📌 NOTE: Keeping session alive across checks")
-        logger.info("📸 Screenshots will be taken at each step for debugging")
+        logger.info("📌 NOTE: Keeping session alive across checks (not logging out between checks)")
+        logger.info("📸 Screenshots enabled for debugging")
         
         while True:
             check_count += 1
@@ -688,26 +552,9 @@ def run_bot():
             if has_slots and not already_notified:
                 slot_count = len(buttons)
                 logger.info(f"\n🔔 SLOTS DETECTED! Sending notification...")
-                
-                # Get latest screenshots to attach
-                screenshots = []
-                try:
-                    for file in sorted(os.listdir('/tmp')):
-                        if file.endswith('.png'):
-                            screenshots.append(os.path.join('/tmp', file))
-                    # Send the last 3 screenshots
-                    screenshots = screenshots[-3:] if len(screenshots) > 3 else screenshots
-                except:
-                    pass
-                
-                send_notification_email(slot_count, screenshots)
+                send_notification_email(slot_count)
                 already_notified = True
                 logger.info("✅ Notification sent! Continuing to monitor...")
-            elif has_slots:
-                logger.info("ℹ️ Slots still available (already notified)")
-            else:
-                logger.info("ℹ️ No available slots - will check again")
-                already_notified = False
             
             logger.info(f"\n⏰ Next check in {CHECK_INTERVAL} seconds ({CHECK_INTERVAL//60} minutes)")
             logger.info(f"Next check at: {datetime.fromtimestamp(time.time() + CHECK_INTERVAL).strftime('%Y-%m-%d %H:%M:%S')}")
