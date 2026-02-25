@@ -17,6 +17,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
 import requests
+import undetected_chromedriver as uc
+import random
 
 # Configure logging
 logging.basicConfig(
@@ -48,25 +50,29 @@ def validate_config():
     
     logger.info("✅ All environment variables configured")
 
+def random_delay(min_seconds=2, max_seconds=5):
+    """Add random human-like delay to avoid bot detection"""
+    delay = random.uniform(min_seconds, max_seconds)
+    time.sleep(delay)
+
 def setup_webdriver():
-    """Setup Selenium Chrome WebDriver for cloud environment"""
+    """Setup Undetected Chrome WebDriver for cloud environment (harder to detect as bot)"""
     try:
         chrome_options = Options()
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
         chrome_options.add_argument('--headless')
-        chrome_options.add_argument('--disable-notifications')
-        chrome_options.add_argument('--disable-popup-blocking')
         chrome_options.add_argument('--start-maximized')
-        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        chrome_options.add_argument('--window-size=1920,1080')
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        driver = webdriver.Chrome(options=chrome_options)
+        # Use undetected-chromedriver (much harder to detect!)
+        logger.info("→ Setting up undetected Chrome driver...")
+        driver = uc.Chrome(options=chrome_options, version_main=None)
+        
         driver.set_page_load_timeout(30)
-        logger.info("✅ Chrome WebDriver initialized")
+        logger.info("✅ Undetected Chrome WebDriver initialized (anti-bot protection active!)")
         return driver
     except Exception as e:
         logger.error(f"❌ Failed to initialize WebDriver: {e}")
@@ -187,14 +193,14 @@ def login(driver):
         email_field.clear()
         email_field.send_keys(KALLANG_EMAIL)
         logger.info(f"✅ Email entered")
-        time.sleep(2)
+        random_delay(1, 3)  # Human would pause here
         
         # Find password field
         password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
         password_field.clear()
         password_field.send_keys(KALLANG_PASSWORD)
         logger.info("✅ Password entered")
-        time.sleep(2)
+        random_delay(1, 4)  # Humans pause before clicking login
         
         take_screenshot(driver, "02_before_login_click")
         
@@ -253,6 +259,37 @@ def login(driver):
                 return False
         
         time.sleep(8)
+        
+        # CRITICAL: Verify that login actually navigated away from login page
+        current_url = driver.current_url
+        logger.info(f"→ Verifying login navigation...")
+        logger.info(f"  Current URL: {current_url}")
+        
+        if "#/login" in current_url.lower():
+            logger.error("❌ CRITICAL: Still on login page after clicking login button!")
+            logger.error("❌ Login form submission failed!")
+            take_screenshot(driver, "ERROR_login_failed_still_on_page")
+            
+            # Try one more time with Enter key
+            logger.info("→ Attempting to submit form with Enter key...")
+            try:
+                password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
+                password_field.send_keys("\n")
+                time.sleep(5)
+                
+                # Check URL again
+                current_url = driver.current_url
+                if "#/login" in current_url.lower():
+                    logger.error("❌ Login failed - still on login page after Enter key")
+                    take_screenshot(driver, "ERROR_login_failed_enter_key")
+                    return False
+                else:
+                    logger.info("✅ Form submitted with Enter key!")
+            except:
+                logger.error("❌ Could not submit with Enter key")
+                return False
+        else:
+            logger.info("✅ Successfully navigated away from login page!")
         
         take_screenshot(driver, "03_after_login")
         get_page_info(driver)
@@ -350,18 +387,33 @@ def dismiss_popups(driver):
         return True
 
 def is_logged_in(driver):
-    """Check if we're still logged in by checking page content"""
+    """Check if we're still logged in by checking URL and page content"""
     try:
+        current_url = driver.current_url
         page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
         
-        # If we see login-related text, we're NOT logged in
-        if any(keyword in page_text for keyword in ['member sign in', 'login', 'forgot password', 'not a member yet']):
-            logger.warning("⚠️ Not logged in - session expired")
+        # If URL still contains #/Login, we're NOT logged in
+        if "#/login" in current_url.lower():
+            logger.warning("⚠️ Not logged in - still on login page (URL check)")
+            take_screenshot(driver, "ERROR_still_on_login_page")
+            return False
+        
+        # If we see login form AND we're on a different URL, still check for logged-in content
+        # Look for typical logged-in page indicators
+        logged_in_indicators = ['book', 'facility', 'booking', 'my bookings', 'schedule']
+        if any(indicator in page_text for indicator in logged_in_indicators):
+            logger.info("✅ Logged in - found booking-related content")
+            return True
+        
+        # If page contains login keywords AND we're still on login page URL
+        if any(keyword in page_text for keyword in ['member sign in', 'forgot password', 'not a member yet']):
+            logger.warning("⚠️ Not logged in - login page content detected")
             take_screenshot(driver, "ERROR_session_expired")
             return False
         
         return True
-    except:
+    except Exception as e:
+        logger.error(f"Error checking login status: {e}")
         return True
 
 def check_for_slots(driver):
@@ -369,6 +421,7 @@ def check_for_slots(driver):
     try:
         # Take screenshot BEFORE checking session to see current state
         logger.info("→ Taking screenshot before session check...")
+        random_delay(1, 2)  # Random delay before checking
         take_screenshot(driver, "05_before_session_check")
         
         # Check if still logged in
@@ -593,8 +646,13 @@ def run_bot():
                 logger.info("✅ Notification sent! Continuing to monitor...")
             
             logger.info(f"\n⏰ Next check in {CHECK_INTERVAL} seconds ({CHECK_INTERVAL//60} minutes)")
-            logger.info(f"Next check at: {datetime.fromtimestamp(time.time() + CHECK_INTERVAL).strftime('%Y-%m-%d %H:%M:%S')}")
-            time.sleep(CHECK_INTERVAL)
+            
+            # Add random variance to avoid pattern detection (±5 minutes)
+            actual_interval = CHECK_INTERVAL + random.randint(-300, 300)
+            next_check_time = datetime.fromtimestamp(time.time() + actual_interval)
+            logger.info(f"Next check at: {next_check_time.strftime('%Y-%m-%d %H:%M:%S')} (±variance)")
+            
+            time.sleep(actual_interval)
     
     except KeyboardInterrupt:
         logger.info("\n⏸️  Bot stopped by user")
