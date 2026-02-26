@@ -349,109 +349,99 @@ def login(driver):
         return False
 
 def dismiss_popups(driver):
-    """Dismiss all popups and cookie dialogs"""
+    """Aggressively dismiss cookie popup - CRITICAL before login"""
     try:
-        logger.info("→ Dismissing popups/cookies...")
+        logger.info("→ AGGRESSIVELY dismissing cookie popup...")
         
-        # FIRST: Try to click "Accept All" button directly using JavaScript
-        # This is more reliable than Selenium element clicking
-        logger.info("  Attempting to click Accept All button...")
-        result = driver.execute_script("""
-            // Look for any button containing "Accept"
-            var buttons = document.querySelectorAll('button');
-            for (let btn of buttons) {
-                var btnText = btn.textContent.trim();
-                logger.info('Found button: ' + btnText);
+        # METHOD 1: Click button via JavaScript with immediate effect
+        logger.info("  METHOD 1: JavaScript direct click...")
+        for attempt in range(3):
+            result = driver.execute_script("""
+                var clicked = false;
                 
-                // Match "Accept All" (case insensitive)
-                if (btnText.toLowerCase().includes('accept')) {
-                    logger.info('Clicking button: ' + btnText);
-                    btn.click();
-                    return true;
+                // Find any button element
+                var buttons = document.querySelectorAll('button, a, div[role="button"]');
+                for (let btn of buttons) {
+                    var text = btn.textContent.trim().toLowerCase();
+                    // Look for "Accept All" or just "Accept"
+                    if (text.includes('accept')) {
+                        console.log('Found button with text: ' + btn.textContent);
+                        // Try multiple click methods
+                        btn.click();
+                        btn.dispatchEvent(new Event('click', { bubbles: true }));
+                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        clicked = true;
+                        return true;
+                    }
                 }
-            }
-            return false;
-        """)
+                return false;
+            """)
+            
+            if result:
+                logger.info(f"  ✅ JavaScript click succeeded (attempt {attempt + 1})")
+                time.sleep(2)
+                break
+            else:
+                logger.info(f"  ⚠️ JavaScript click attempt {attempt + 1} - button not found")
+                time.sleep(1)
         
-        logger.info(f"  JavaScript click result: {result}")
-        time.sleep(2)
-        
-        # SECOND: Try clicking via Selenium with case-insensitive matching
-        accept_selectors = [
-            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept all')]",
-            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'accept')]",
-            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'agree')]",
-            "//button[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'ok')]",
-        ]
-        
-        for selector in accept_selectors:
-            try:
-                buttons = driver.find_elements(By.XPATH, selector)
-                logger.info(f"  Found {len(buttons)} button(s) with selector")
-                for btn in buttons:
-                    if btn.is_displayed():
-                        btn_text = btn.text
-                        logger.info(f"  Clicking: {btn_text}")
-                        # Scroll into view first
-                        driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                        time.sleep(0.5)
-                        btn.click()
-                        time.sleep(1)
-            except Exception as e:
-                logger.info(f"  Selector failed: {str(e)[:50]}")
-                pass
-        
-        # THIRD: Use JavaScript to aggressively remove cookie elements
-        logger.info("  Using JavaScript to remove cookie overlays...")
+        # METHOD 2: Remove cookie element by ID/class
+        logger.info("  METHOD 2: Removing cookie elements...")
         driver.execute_script("""
-            // Remove cookie banners by common selectors
-            var toRemove = [
-                document.querySelector('[class*="cookie"]'),
-                document.querySelector('[class*="popup"]'),
-                document.querySelector('[class*="banner"]'),
-                document.querySelector('[id*="cookie"]'),
-                document.querySelector('[id*="popup"]'),
-                document.querySelector('[role="dialog"]'),
+            // Aggressive removal of all possible cookie elements
+            var selectors = [
+                '[class*="cookie-banner"]',
+                '[class*="cookie_banner"]',
+                '[id*="cookie"]',
+                '[class*="gdpr"]',
+                '[data-testid*="cookie"]',
+                '[class*="consent"]',
+                'div[role="dialog"]'
             ];
             
-            toRemove.forEach(el => {
-                if (el) {
+            selectors.forEach(selector => {
+                var elements = document.querySelectorAll(selector);
+                elements.forEach(el => {
                     try {
                         el.remove();
                     } catch(e) {}
-                }
+                });
             });
             
-            // Remove any overlay divs with high z-index
-            var allDivs = document.querySelectorAll('div');
-            allDivs.forEach(div => {
-                var style = window.getComputedStyle(div);
-                if (style.position === 'fixed' && parseInt(style.zIndex) > 500) {
-                    try {
-                        div.remove();
-                    } catch(e) {}
-                }
-            });
-            
-            // Restore scrolling
+            // Remove overflow hidden
             document.body.style.overflow = 'auto';
             document.body.style.height = 'auto';
         """)
         
         time.sleep(2)
-        logger.info("✅ Popup dismissal complete")
         
-        # Verify cookie banner is gone
-        page_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-        if "accept all" in page_text[:500] or "cookies" in page_text[:300]:
-            logger.warning("⚠️ Cookie banner may still be visible - proceeding anyway")
-        else:
-            logger.info("✅ Verified: Cookie banner removed")
+        # METHOD 3: Verify popup is gone
+        logger.info("  METHOD 3: Verifying popup is gone...")
+        for check in range(5):
+            page_text = driver.find_element(By.TAG_NAME, "body").text
+            
+            if "accept all" not in page_text.lower()[:300] and "cookies" not in page_text[:200].lower():
+                logger.info(f"  ✅ Verified: Cookie popup is GONE (check {check + 1})")
+                return True
+            else:
+                logger.info(f"  ⏳ Still seeing cookie text (check {check + 1}/5) - retrying...")
+                # Try clicking again
+                driver.execute_script("""
+                    var buttons = document.querySelectorAll('button');
+                    for (let btn of buttons) {
+                        if (btn.textContent.toLowerCase().includes('accept')) {
+                            btn.click();
+                        }
+                    }
+                """)
+                time.sleep(1.5)
         
+        logger.info("✅ Cookie dismissal complete")
         return True
         
     except Exception as e:
-        logger.warning(f"⚠️ Error dismissing popups: {e}")
+        logger.warning(f"⚠️ Error dismissing cookies: {e}")
+        # Continue anyway - don't let cookie dismissal block login
         return True
 
 def is_logged_in(driver):
